@@ -122,10 +122,8 @@ function download_rootfs(){
     mkdir /x
 
     if [ "$cttype" == 'lxc' ] ; then
-        #rootfs.tar.xz
         wget -qO- $download_link | tar -C /x -xJv
     elif [ "$cttype" == 'openvz' ] ; then
-        #rootfs.tar.gz
         wget -qO- $download_link | tar -C /x -xzv
     elif [ "$cttype" == 'kvm' ] ; then
        echo "kvm is not supported by this script"
@@ -133,11 +131,17 @@ function download_rootfs(){
     fi
 }
 
-
 function migrate_configuration(){
     # save root password and ssh directory
     sed -i '/^root:/d' /x/etc/shadow
-    grep '^root:' /etc/shadow >> /x/etc/shadow
+
+    if [ -n "$ROOT_PASSWORD" ]; then
+        root_hash=$(openssl passwd -6 "$ROOT_PASSWORD")
+        echo "root:${root_hash}:$(date +%s | awk '{print int($1/86400)}'):0:99999:7:::" >> /x/etc/shadow
+    else
+        grep '^root:' /etc/shadow >> /x/etc/shadow
+    fi
+
     [ -d /root/.ssh ] && cp -a /root/.ssh /x/root/
 
     # save network configuration
@@ -148,7 +152,6 @@ function migrate_configuration(){
     route_part="$(ip route show default 0.0.0.0/0 | sed -E 's/^(.*dev [^ ]+).*$/\1/')"
     gateway_line="up ip route add $route_part"
 
-    # manual save network
     if [ -f /etc/network/interfaces ] && grep static /etc/network/interfaces > /dev/null ; then
         cp -rf /etc/network/interfaces /x/etc/network/interfaces
     else
@@ -173,13 +176,12 @@ function migrate_configuration(){
 }
 
 function install_requirement(){
-    # prevent no access on ipv6 only vps
     ping -c 3 api.github.com || echo "nameserver 2a00:1098:2c::1"  >  /etc/resolv.conf 
     
     if [ -n "$(command -v apk)" ] ; then
-        install curl sed gawk wget gzip xz tar virt-what
+        install curl sed gawk wget gzip xz tar virt-what openssl
     else
-        install curl sed gawk wget gzip xz-utils virt-what
+        install curl sed gawk wget gzip xz-utils virt-what openssl
     fi
 }
 
@@ -210,7 +212,7 @@ function post_install(){
         if [ "$cttype" == 'lxc' ] ; then
             apk add ifupdown-ng
             rc-update add networking default
-            sed -i 's/--auto/-a/' /etc/init.d/networking # fix bug in networking script of lxc
+            sed -i 's/--auto/-a/' /etc/init.d/networking
         fi
     elif grep -qi debian /etc/issue; then
         install ssh
@@ -223,7 +225,6 @@ function post_install(){
         if [ "$cttype" == 'lxc' ] ; then
             install ifupdown
             systemctl disable systemd-networkd.service
-            # To-Do: Network service of CentOS need modify
         fi
     fi
     echo PermitRootLogin yes >> /etc/ssh/sshd_config
